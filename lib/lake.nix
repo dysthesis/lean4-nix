@@ -128,6 +128,9 @@
           if [ -d .lake/build/lib ]; then
             mv .lake/build/lib $out/
           fi
+          if [ -d .lake/build/ir ]; then
+            mv .lake/build/ir $out/
+          fi
         '';
     };
 in {
