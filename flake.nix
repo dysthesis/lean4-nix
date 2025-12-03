@@ -6,62 +6,53 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
   };
 
-  outputs = inputs @ {
-    self,
-    nixpkgs,
-    flake-parts,
-    ...
-  }:
-    flake-parts.lib.mkFlake {inherit inputs;} {
-      systems = [
-        "aarch64-darwin"
-        "aarch64-linux"
-        "x86_64-darwin"
-        "x86_64-linux"
-      ];
+  outputs = inputs@{ self, nixpkgs, flake-parts, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      systems =
+        [ "aarch64-darwin" "aarch64-linux" "x86_64-darwin" "x86_64-linux" ];
 
-      flake =
-        (import ./lib/overlay.nix)
-        // {
-          lake = import ./lib/lake.nix;
-          templates = import ./templates;
-        };
-
-      perSystem = {
-        system,
-        pkgs,
-        ...
-      }: let
-        toolchain-file = ./templates/minimal/lean-toolchain;
-        # With built toolchain
-        pkgs-bin = import nixpkgs {
-          inherit system;
-          overlays = [(self.readToolchainFile toolchain-file)];
-        };
-        # With binary toolchain
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [
-            (self.readToolchainFile {
-              toolchain = toolchain-file;
-              binary = false;
-            })
-          ];
-        };
-        lake2nix-bin = pkgs-bin.callPackage self.lake {};
-      in {
-        packages = {
-          lean-bin = pkgs-bin.lean;
-          inherit (pkgs) lean;
-          inherit (pkgs.lean) cacheRoots;
-        };
-        devShells.default = pkgs.mkShell {
-          buildInputs = [pkgs.pre-commit (pkgs.callPackage ./lib/toolchain.nix {}).toolchain-fetch];
-        };
-
-        checks = (import ./checks.nix) {inherit pkgs-bin lake2nix-bin pkgs;};
-
-        formatter = pkgs.alejandra;
+      flake = (import ./lib/overlay.nix) // {
+        lake = import ./lib/lake.nix;
+        templates = import ./templates;
       };
+
+      perSystem = { system, pkgs, ... }:
+        let
+          toolchain-file = ./templates/minimal/lean-toolchain;
+          # With built toolchain
+          pkgs-bin = import nixpkgs {
+            inherit system;
+            overlays = [ (self.readToolchainFile toolchain-file) ];
+          };
+          # With binary toolchain
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [
+              (self.readToolchainFile {
+                toolchain = toolchain-file;
+                binary = false;
+              })
+            ];
+          };
+          lake2nix-bin = pkgs-bin.callPackage self.lake { };
+        in {
+          packages = {
+            lean-bin = pkgs-bin.lean;
+            inherit (pkgs) lean;
+            inherit (pkgs.lean) cacheRoots;
+          };
+          devShells.default = pkgs.mkShell {
+            buildInputs = [
+              pkgs.pre-commit
+              (pkgs.callPackage ./lib/toolchain.nix { }).toolchain-fetch
+            ];
+            packages = with pkgs; [ nixd statix deadnix alejandra ];
+          };
+
+          checks =
+            (import ./checks.nix) { inherit pkgs-bin lake2nix-bin pkgs; };
+
+          formatter = pkgs.alejandra;
+        };
     };
 }
