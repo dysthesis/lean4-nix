@@ -3,6 +3,8 @@
   lib,
   stdenv,
   lean,
+  runCommand,
+  git,
 }: let
   capitalize = s: let
     first = lib.toUpper (builtins.substring 0 1 s);
@@ -21,25 +23,49 @@
     ...
   }: let
     manifest = importLakeManifest "${src}/lake-manifest.json";
+    mkOneManifest = {
+      name,
+      inherited ? false,
+      ...
+    }: rec {
+      inherit name inherited;
+      # We set the entry as `git`, so that Lake will clone it to the Nix store
+      # to the build directory, where it has read/write access.
+      type = "git";
+      url = deps.${name};
+      rev =
+        lib.removeSuffix "\n"
+        (builtins.readFile "${deps.${name}}/commit-hash");
+    };
     # create a surrogate manifest
     replaceManifest =
       pkgs.writers.writeJSON "lake-manifest.json"
-      (
-        lib.setAttr manifest "packages" (builtins.map ({
-            name,
-            inherited ? false,
-            ...
-          }: {
-            inherit name inherited;
-            type = "path";
-            dir = deps.${name};
-          })
-          manifest.packages)
-      );
-  in
-    stdenv.mkDerivation (
+      (lib.setAttr manifest "packages"
+        (builtins.map mkOneManifest manifest.packages));
+
+    mkFakeGitRepo = name: src:
+      runCommand "${name}-fake-git" {
+        buildInputs = [git];
+      } ''
+        export HOME=$TMPDIR
+        mkdir -pv $out
+        cd $out/
+        cp -r ${src}/* .
+        git init
+        git add .
+        export GIT_AUTHOR_NAME="nix"
+        export GIT_AUTHOR_EMAIL="nix@example.com"
+        export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+        export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+        export GIT_AUTHOR_DATE="1970-01-01T00:00:00Z"
+        export GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"
+        git commit -m "Snapshot for Nix"
+        git rev-parse HEAD > commit-hash
+      '';
+
+    builtPkg = stdenv.mkDerivation (
       {
-        buildInputs = [lean.lean-all];
+        buildInputs = [git lean.lean-all];
 
         configurePhase = ''
           rm lake-manifest.json
@@ -47,6 +73,11 @@
         '';
 
         buildPhase = ''
+          export HOME=$TMPDIR
+          ${lib.concatStringsSep "\n" (lib.mapAttrsToList (
+              name: path: "git config --global --add safe.directory ${path}/.git"
+            )
+            deps)}
           lake build
         '';
         installPhase = ''
@@ -57,6 +88,8 @@
       }
       // (builtins.removeAttrs args ["deps"])
     );
+  in
+    mkFakeGitRepo name builtPkg;
   # Builds a Lean package by reading the manifest file.
   mkPackage = args @ {
     # Path to the source
@@ -74,12 +107,14 @@
     roots =
       args.roots or [(capitalize manifest.name)];
 
-    depSources = builtins.listToAttrs (builtins.map (info: {
-        inherit (info) name;
-        value = builtins.fetchGit {
+    depSources = builtins.listToAttrs (builtins.map (info: let
+        src = builtins.fetchGit {
           inherit (info) url rev;
           shallow = true;
         };
+      in {
+        inherit (info) name;
+        value = src;
       })
       manifest.packages);
     # construct dependency name map
