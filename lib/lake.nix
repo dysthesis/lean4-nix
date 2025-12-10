@@ -27,6 +27,7 @@ npmlock2nix: {
   mkLakeBuildStep = {
     deps ? {},
     roots ? [],
+    extraBuildArgs ? [],
     lakeManifestPath ? null,
     useBubblewrap ? true,
   }: let
@@ -41,7 +42,8 @@ npmlock2nix: {
     commandArgs =
       ["lake" "build"]
       ++ lakeManifestArgs
-      ++ rootsArgs;
+      ++ rootsArgs
+      ++ extraBuildArgs;
 
     depPaths = lib.attrValues deps;
   in
@@ -154,6 +156,7 @@ npmlock2nix: {
     staticLibDeps ? [],
     # Override derivation args in dependencies
     depOverride ? {},
+    extraBuildArgs ? [],
     ...
   }: let
     manifest = importLakeManifest manifestFile;
@@ -247,7 +250,7 @@ npmlock2nix: {
       })
       manifest.packages);
   in
-    mkLakeDerivation ( {
+    mkLakeDerivation ({
         inherit src;
         inherit (manifest) name;
         deps = manifestDeps;
@@ -258,13 +261,13 @@ npmlock2nix: {
             runHook preBuild
             ${mkLakeBuildStep {
               deps = manifestDeps;
-              inherit roots;
+              inherit roots extraBuildArgs;
             }}
             runHook postBuild
           '';
         installPhase =
           args.installPhase
-          or 
+          or
           # sh
           ''
             runHook preInstall
