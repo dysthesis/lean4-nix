@@ -117,7 +117,7 @@ npmlock2nix: {
             fi
           '') (args.preConfigurePhases or [])}
           rm lake-manifest.json
-          ln -s ${replaceManifest}lake-manifest.json
+          ln -s ${replaceManifest} lake-manifest.json
           # Ensure the bubblewrap mountpoint for dependency configs exists before the store becomes read-only
           mkdir -p .lake/config
           runHook postConfigure
