@@ -57,6 +57,12 @@
         };
         devShells.default = pkgs.mkShell {
           buildInputs = [pkgs.pre-commit (pkgs.callPackage ./lib/toolchain.nix {}).toolchain-fetch];
+          packages = with pkgs; [
+            nixd
+            alejandra
+            statix
+            deadnix
+          ];
         };
 
         checks = (import ./checks.nix) {inherit pkgs-bin lake2nix-bin pkgs;};
