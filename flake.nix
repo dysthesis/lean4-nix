@@ -4,12 +4,17 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
+    npmlock2nix = {
+      url = "github:nix-community/npmlock2nix";
+      flake = false;
+    };
   };
 
   outputs = inputs @ {
     self,
     nixpkgs,
     flake-parts,
+    npmlock2nix,
     ...
   }:
     flake-parts.lib.mkFlake {inherit inputs;} {
@@ -23,7 +28,7 @@
       flake =
         (import ./lib/overlay.nix)
         // {
-          lake = import ./lib/lake.nix;
+          lake = import ./lib/lake.nix npmlock2nix;
           templates = import ./templates;
         };
 
@@ -36,7 +41,12 @@
         # With built toolchain
         pkgs-bin = import nixpkgs {
           inherit system;
-          overlays = [(self.readToolchainFile toolchain-file)];
+          overlays = [
+            (self.readToolchainFile toolchain-file)
+            (self: super: {
+              npmlock2nix = super.callPackage npmlock2nix {};
+            })
+          ];
         };
         # With binary toolchain
         pkgs = import nixpkgs {
@@ -45,6 +55,9 @@
             (self.readToolchainFile {
               toolchain = toolchain-file;
               binary = false;
+            })
+            (self: super: {
+              npmlock2nix = super.callPackage npmlock2nix {};
             })
           ];
         };

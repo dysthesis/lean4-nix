@@ -1,4 +1,4 @@
-{
+npmlock2nix: {
   pkgs,
   lib,
   stdenv,
@@ -43,6 +43,12 @@
 
         configurePhase = ''
           runHook preConfigure
+          ${lib.concatMapStringsSep "\n" (phase: ''
+            if [ -n "''${${phase}:-}" ]; then
+              echo "Running ${phase}"
+              eval "''${${phase}}"
+            fi
+          '') (args.preConfigurePhases or [])}
           rm lake-manifest.json
           ln -s ${replaceManifest} lake-manifest.json
           runHook postConfigure
@@ -67,6 +73,10 @@
   mkPackage = args @ {
     # Path to the source
     src,
+    # Path to the directory containing package.json and package-lock.json (null if no npm deps)
+    nodeSrc ? null,
+    # Relative path from project root to where node_modules should be placed
+    nodeModulesPath ? ".",
     # Path to the `lake-manifest.json` file
     manifestFile ? "${src}/lake-manifest.json",
     # Root module
@@ -81,6 +91,32 @@
 
     roots =
       args.roots or [(capitalize manifest.name)];
+
+    # Compute node_modules derivation if nodeSrc provided
+    nodeModules =
+      if nodeSrc != null
+      then npmlock2nix.node_modules {src = nodeSrc;}
+      else null;
+
+    # Merge npm setup into depOverride for root package
+    actualDepOverride =
+      if nodeModules != null
+      then
+        depOverride
+        // {
+          ${manifest.name} =
+            (depOverride.${manifest.name} or {})
+            // {
+              preConfigurePhases = (depOverride.${manifest.name}.preConfigurePhases or []) ++ ["setupNodeModules"];
+              setupNodeModules = ''
+                echo "Setting up node_modules at ${nodeModulesPath}"
+                mkdir -p ${nodeModulesPath}
+                ln -sf ${nodeModules}/node_modules ${nodeModulesPath}/node_modules
+              '';
+              nativeBuildInputs = (depOverride.${manifest.name}.nativeBuildInputs or []) ++ [nodeModules];
+            };
+        }
+      else depOverride;
 
     depSources = builtins.listToAttrs (builtins.map (info: {
         inherit (info) name;
@@ -102,9 +138,20 @@
       depSources;
 
     # Build all dependencies
-    manifestDeps = builtins.listToAttrs (builtins.map (info: {
+    manifestDeps = builtins.listToAttrs (builtins.map (info: let
+        depOverrideForPkg = depOverride.${info.name} or {};
+        depNpmConfig = depOverrideForPkg.npm or null;
+        depNodeModules =
+          if depNpmConfig != null
+          then let
+            depNodeSrc = depSources.${info.name} + "/${depNpmConfig.nodeSubdir}";
+          in
+            npmlock2nix.node_modules {src = depNodeSrc;}
+          else null;
+      in {
         inherit (info) name;
-        value = mkLakeDerivation ({
+        value = mkLakeDerivation (
+          {
             inherit (info) name url;
             src = depSources.${info.name};
             deps = builtins.listToAttrs (builtins.map (name: {
@@ -113,7 +160,21 @@
               })
               flatDeps.${info.name});
           }
-          // (depOverride.${info.name} or {}));
+          // (builtins.removeAttrs depOverrideForPkg ["npm"])
+          // (
+            if depNpmConfig != null
+            then {
+              preConfigurePhases = (depOverrideForPkg.preConfigurePhases or []) ++ ["setupNodeModules"];
+              setupNodeModules = ''
+                echo "Setting up node_modules for dependency ${info.name} at ${depNpmConfig.nodeSubdir}"
+                mkdir -p ${depNpmConfig.nodeSubdir}
+                ln -sf ${depNodeModules}/node_modules ${depNpmConfig.nodeSubdir}/node_modules
+              '';
+              nativeBuildInputs = (depOverrideForPkg.nativeBuildInputs or []) ++ [depNodeModules];
+            }
+            else {}
+          )
+        );
       })
       manifest.packages);
   in
@@ -143,7 +204,7 @@
             runHook postInstall
           '';
       }
-      // (depOverride.${manifest.name} or {}));
+      // (actualDepOverride.${manifest.name} or {}));
 in {
   inherit mkLakeDerivation mkPackage;
 }
